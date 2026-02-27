@@ -4,6 +4,7 @@
    + Preferiti (Mi piace)
    + Contatore outfit salvati
    + Ordina: preferiti prima / solo preferiti / voto
+   + FIX: immagini che non si visualizzano (conversione JPEG)
    ========================================================= */
 
 /* -----------------------------
@@ -72,7 +73,6 @@ function openDB() {
         store.createIndex("name", "name", { unique: false });
         store.createIndex("favorite", "favorite", { unique: false });
       } else {
-        // If store exists from old version, ensure indexes exist (best effort)
         const store = req.transaction.objectStore(STORE);
         if (!store.indexNames.contains("createdAt")) store.createIndex("createdAt", "createdAt", { unique: false });
         if (!store.indexNames.contains("rating")) store.createIndex("rating", "rating", { unique: false });
@@ -163,6 +163,59 @@ function safeName(name) {
 
 function makeObjectURL(blob) {
   return URL.createObjectURL(blob);
+}
+
+/**
+ * FIX immagini non visualizzate:
+ * Convertiamo sempre il file in JPEG standard (ridimensionato),
+ * evitando problemi su Android con HEIC / mime vuoto / immagini enormi.
+ */
+async function fileToSafeJpegBlob(file, maxSide = 1600, quality = 0.9) {
+  let bitmap = null;
+
+  if ("createImageBitmap" in window) {
+    try {
+      bitmap = await createImageBitmap(file);
+    } catch {
+      bitmap = null;
+    }
+  }
+
+  if (!bitmap) {
+    const dataUrl = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+      r.readAsDataURL(file);
+    });
+
+    bitmap = await new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = dataUrl;
+    });
+  }
+
+  const w = bitmap.width;
+  const h = bitmap.height;
+
+  const scale = Math.min(1, maxSide / Math.max(w, h));
+  const cw = Math.max(1, Math.round(w * scale));
+  const ch = Math.max(1, Math.round(h * scale));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = cw;
+  canvas.height = ch;
+
+  const ctx = canvas.getContext("2d", { alpha: false });
+  ctx.drawImage(bitmap, 0, 0, cw, ch);
+
+  const blob = await new Promise((resolve) => {
+    canvas.toBlob((b) => resolve(b), "image/jpeg", quality);
+  });
+
+  return blob || file;
 }
 
 /* -----------------------------
@@ -286,8 +339,11 @@ function renderGrid() {
     const url = makeObjectURL(outfit.imageBlob);
     img.src = url;
 
-    img.addEventListener("load", () => {
-      try { URL.revokeObjectURL(url); } catch {}
+    // Non revocare subito: su alcuni Android rompe la preview (immagine rotta)
+    // (se vuoi pulizia memoria: si può fare in modo più sicuro con una cache URL)
+
+    img.addEventListener("error", () => {
+      console.warn("Immagine non caricata:", outfit.id, outfit.name, outfit.imageBlob);
     });
 
     const body = document.createElement("div");
@@ -484,7 +540,8 @@ async function shareDetail() {
 async function addOutfitFromFile(file) {
   if (!file) return;
 
-  const blob = file;
+  // FIX: convertiamo sempre a JPEG sicuro
+  const safeBlob = await fileToSafeJpegBlob(file, 1600, 0.9);
 
   const outfit = {
     id: uid(),
@@ -492,7 +549,7 @@ async function addOutfitFromFile(file) {
     rating: 0,
     favorite: false,
     createdAt: Date.now(),
-    imageBlob: blob
+    imageBlob: safeBlob
   };
 
   try {
@@ -599,6 +656,7 @@ async function refresh() {
     state.search = el.searchInput.value;
     renderGrid();
   });
+
   el.sortSelect.addEventListener("change", () => {
     state.sort = el.sortSelect.value;
     renderGrid();
@@ -606,6 +664,7 @@ async function refresh() {
 
   el.closeDetail.addEventListener("click", closeDetailModal);
   el.detailBackdrop.addEventListener("click", closeDetailModal);
+
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       if (!el.detailModal.hidden) closeDetailModal();
