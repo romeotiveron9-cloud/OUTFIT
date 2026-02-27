@@ -1,27 +1,25 @@
 /* =========================================================
-   Outfit Vault — app.js (refactor completo)
-   Offline-first outfits storage with IndexedDB + PWA install
-   - Preferiti
-   - Contatore outfit salvati
-   - Ricerca + ordina
-   - Fix immagini (conversione JPEG sicura)
-   - Pulizia ObjectURL per evitare leak
+   Outfit Vault — app.js
+   - IndexedDB outfits
+   - UI: search, sort, filtro rapido (Tutti/Preferiti)
+   - Tips: mostrati solo al primo avvio
+   - PWA install + service worker
+   - Fix immagini: conversione JPEG sicura
    ========================================================= */
 
 /* -----------------------------
-   0) Costanti
+   0) Keys
 ----------------------------- */
-
 const SETTINGS_KEY = "outfit_vault_settings_v1";
+const TIPS_KEY = "outfit_vault_tips_seen_v1";
 
 const DB_NAME = "OutfitVaultDB";
 const DB_VERSION = 2;
 const STORE = "outfits";
 
 /* -----------------------------
-   1) Settings (LocalStorage + theme)
+   1) Settings + theme
 ----------------------------- */
-
 const settingsDefault = { theme: "system" };
 
 function loadSettings() {
@@ -32,7 +30,6 @@ function loadSettings() {
     return { ...settingsDefault };
   }
 }
-
 function saveSettings(s) {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
 }
@@ -41,30 +38,24 @@ function setThemeColor(color) {
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute("content", color);
 }
-
 function syncThemeColorWithSystem() {
   const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
   setThemeColor(prefersDark ? "#0b1020" : "#f7f3ff");
 }
-
 function setTheme(theme) {
   const root = document.documentElement;
-
   if (theme === "system") {
     root.removeAttribute("data-theme");
     syncThemeColorWithSystem();
     return;
   }
-
   root.setAttribute("data-theme", theme);
   setThemeColor(theme === "dark" ? "#0b1020" : "#f7f3ff");
 }
 
 /* -----------------------------
    2) IndexedDB
-   Store: { id, name, rating, favorite, createdAt, imageBlob }
 ----------------------------- */
-
 function openDB() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
@@ -97,7 +88,6 @@ function withTx(db, mode, fn) {
     const tx = db.transaction(STORE, mode);
     const store = tx.objectStore(STORE);
     const result = fn(store);
-
     tx.oncomplete = () => resolve(result);
     tx.onerror = () => reject(tx.error);
     tx.onabort = () => reject(tx.error);
@@ -108,36 +98,30 @@ async function dbAddOutfit(outfit) {
   const db = await openDB();
   return withTx(db, "readwrite", (store) => store.add(outfit));
 }
-
 async function dbPutOutfit(outfit) {
   const db = await openDB();
   return withTx(db, "readwrite", (store) => store.put(outfit));
 }
-
 async function dbDeleteOutfit(id) {
   const db = await openDB();
   return withTx(db, "readwrite", (store) => store.delete(id));
 }
-
 async function dbGetAllOutfits() {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, "readonly");
     const store = tx.objectStore(STORE);
     const req = store.getAll();
-
     req.onsuccess = () => resolve(req.result || []);
     req.onerror = () => reject(req.error);
   });
 }
-
 async function dbGetOutfit(id) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, "readonly");
     const store = tx.objectStore(STORE);
     const req = store.get(id);
-
     req.onsuccess = () => resolve(req.result || null);
     req.onerror = () => reject(req.error);
   });
@@ -146,27 +130,22 @@ async function dbGetOutfit(id) {
 /* -----------------------------
    3) Helpers
 ----------------------------- */
-
 function uid() {
   return `o_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
-
 function clampRating(n) {
   const x = Number(n);
   if (!Number.isFinite(x)) return 0;
   return Math.min(5, Math.max(0, Math.round(x)));
 }
-
 function safeName(name) {
   const s = (name || "").trim();
   return s ? s : "Outfit senza nome";
 }
-
 function formatDate(ts) {
   const d = new Date(ts);
   return d.toLocaleString(undefined, { year: "numeric", month: "short", day: "2-digit" });
 }
-
 function debounce(fn, wait = 120) {
   let t = null;
   return (...args) => {
@@ -175,20 +154,12 @@ function debounce(fn, wait = 120) {
   };
 }
 
-/**
- * Fix immagini non visualizzate:
- * Convertiamo sempre il file in JPEG standard (ridimensionato),
- * evitando problemi su Android con HEIC / mime vuoto / immagini enormi.
- */
+/* FIX immagini: converti sempre in JPEG sicuro */
 async function fileToSafeJpegBlob(file, maxSide = 1600, quality = 0.9) {
   let bitmap = null;
 
   if ("createImageBitmap" in window) {
-    try {
-      bitmap = await createImageBitmap(file);
-    } catch {
-      bitmap = null;
-    }
+    try { bitmap = await createImageBitmap(file); } catch { bitmap = null; }
   }
 
   if (!bitmap) {
@@ -207,16 +178,13 @@ async function fileToSafeJpegBlob(file, maxSide = 1600, quality = 0.9) {
     });
   }
 
-  const w = bitmap.width;
-  const h = bitmap.height;
-
+  const w = bitmap.width, h = bitmap.height;
   const scale = Math.min(1, maxSide / Math.max(w, h));
   const cw = Math.max(1, Math.round(w * scale));
   const ch = Math.max(1, Math.round(h * scale));
 
   const canvas = document.createElement("canvas");
-  canvas.width = cw;
-  canvas.height = ch;
+  canvas.width = cw; canvas.height = ch;
 
   const ctx = canvas.getContext("2d", { alpha: false });
   ctx.drawImage(bitmap, 0, 0, cw, ch);
@@ -229,9 +197,8 @@ async function fileToSafeJpegBlob(file, maxSide = 1600, quality = 0.9) {
 }
 
 /* -----------------------------
-   4) State
+   4) State + URL cache
 ----------------------------- */
-
 const state = {
   outfits: [],
   filtered: [],
@@ -242,42 +209,31 @@ const state = {
   settings: loadSettings()
 };
 
-/**
- * Cache ObjectURL per le thumbnail:
- * - non le revoco subito (alcuni Android rompono la preview)
- * - le revoco quando rifaccio render o quando elimino/chiudo
- */
 const urlCache = new Map(); // id -> objectURL
-
 function getThumbURL(outfit) {
   if (!outfit?.id || !outfit?.imageBlob) return "";
-  const existing = urlCache.get(outfit.id);
-  if (existing) return existing;
-
+  if (urlCache.has(outfit.id)) return urlCache.get(outfit.id);
   const url = URL.createObjectURL(outfit.imageBlob);
   urlCache.set(outfit.id, url);
   return url;
 }
-
 function revokeThumbURL(id) {
   const url = urlCache.get(id);
   if (!url) return;
   try { URL.revokeObjectURL(url); } catch {}
   urlCache.delete(id);
 }
-
-function resetThumbCacheKeeping(keepIds = new Set()) {
+function keepOnlyThumbs(idsSet) {
   for (const [id, url] of urlCache.entries()) {
-    if (keepIds.has(id)) continue;
+    if (idsSet.has(id)) continue;
     try { URL.revokeObjectURL(url); } catch {}
     urlCache.delete(id);
   }
 }
 
 /* -----------------------------
-   5) UI Elements
+   5) UI elements
 ----------------------------- */
-
 const el = {
   grid: document.getElementById("grid"),
   emptyState: document.getElementById("emptyState"),
@@ -290,6 +246,10 @@ const el = {
   sortSelect: document.getElementById("sortSelect"),
 
   savedCount: document.getElementById("savedCount"),
+
+  tips: document.getElementById("tips"),
+
+  filterBtn: document.getElementById("filterBtn"),
   filterLabel: document.getElementById("filterLabel"),
 
   // Detail modal
@@ -320,22 +280,49 @@ const el = {
 };
 
 /* -----------------------------
-   6) Filters + sort
+   6) Tips: show once
 ----------------------------- */
+function initTips() {
+  if (!el.tips) return;
+
+  const seen = localStorage.getItem(TIPS_KEY) === "1";
+  if (!seen) {
+    el.tips.hidden = false;
+    localStorage.setItem(TIPS_KEY, "1");
+  } else {
+    el.tips.hidden = true;
+  }
+}
+
+/* -----------------------------
+   7) Filter/sort
+   - sortSelect gestisce l'ordinamento completo
+   - filterBtn: toggle rapido Tutti <-> Preferiti
+----------------------------- */
+function setFilterLabelFromSort() {
+  if (!el.filterLabel) return;
+  el.filterLabel.textContent = (state.sort === "fav_only") ? "Preferiti" : "Tutti";
+}
+
+function toggleQuickFilter() {
+  // Se sei già su "Solo preferiti" -> torna ai più recenti.
+  // Altrimenti -> vai su "Solo preferiti".
+  const next = (state.sort === "fav_only") ? "date_desc" : "fav_only";
+  state.sort = next;
+
+  if (el.sortSelect) el.sortSelect.value = next;
+  setFilterLabelFromSort();
+  renderGrid();
+}
 
 function applyFiltersAndSort() {
   const q = state.search.trim().toLowerCase();
   let arr = [...state.outfits];
 
-  if (q) {
-    arr = arr.filter((o) => (o.name || "").toLowerCase().includes(q));
-  }
+  if (q) arr = arr.filter(o => (o.name || "").toLowerCase().includes(q));
 
   const s = state.sort;
-
-  if (s === "fav_only") {
-    arr = arr.filter((o) => !!o.favorite);
-  }
+  if (s === "fav_only") arr = arr.filter(o => !!o.favorite);
 
   arr.sort((a, b) => {
     const af = a.favorite ? 1 : 0;
@@ -356,26 +343,18 @@ function applyFiltersAndSort() {
   });
 
   state.filtered = arr;
-
-  if (el.filterLabel) {
-    el.filterLabel.textContent = (state.sort === "fav_only") ? "Preferiti" : "Tutti";
-  }
 }
 
 /* -----------------------------
-   7) Rendering (Grid)
+   8) Render grid
 ----------------------------- */
-
 function renderGrid() {
   applyFiltersAndSort();
-
   const items = state.filtered;
+
   if (!el.grid) return;
 
-  // Mantieni URLs solo per gli elementi effettivamente in lista per ridurre memoria
-  const keepIds = new Set(items.map((o) => o.id));
-  resetThumbCacheKeeping(keepIds);
-
+  keepOnlyThumbs(new Set(items.map(o => o.id)));
   el.grid.innerHTML = "";
 
   if (!items.length) {
@@ -395,11 +374,7 @@ function renderGrid() {
     img.className = "thumb";
     img.alt = outfit.name || "Outfit";
     img.loading = "lazy";
-
     img.src = getThumbURL(outfit);
-    img.addEventListener("error", () => {
-      console.warn("Immagine non caricata:", outfit.id, outfit.name, outfit.imageBlob);
-    });
 
     const body = document.createElement("div");
     body.className = "card-body";
@@ -422,7 +397,6 @@ function renderGrid() {
 
     meta.appendChild(date);
     meta.appendChild(badge);
-
     body.appendChild(title);
     body.appendChild(meta);
 
@@ -443,19 +417,16 @@ function renderGrid() {
 }
 
 /* -----------------------------
-   8) Detail modal (open/close)
+   9) Detail modal
 ----------------------------- */
-
 function openDetailModal() {
   if (el.detailBackdrop) el.detailBackdrop.hidden = false;
   if (el.detailModal) el.detailModal.hidden = false;
 }
-
 function closeDetailModal() {
   if (el.detailBackdrop) el.detailBackdrop.hidden = true;
   if (el.detailModal) el.detailModal.hidden = true;
 
-  // revoca preview detail (non le thumb)
   if (state.selectedURL) {
     try { URL.revokeObjectURL(state.selectedURL); } catch {}
   }
@@ -494,7 +465,6 @@ async function openDetail(id) {
   if (el.detailTitle) el.detailTitle.textContent = safeName(outfit.name);
   if (el.detailMeta) el.detailMeta.textContent = `Creato: ${formatDate(outfit.createdAt)}`;
 
-  // Preview detail (revoca la precedente)
   if (state.selectedURL) {
     try { URL.revokeObjectURL(state.selectedURL); } catch {}
   }
@@ -514,11 +484,6 @@ async function openDetail(id) {
   setFavoriteBtn(!!outfit.favorite);
 
   openDetailModal();
-
-  // piccolo comfort: focus sul nome
-  if (el.detailName) {
-    try { el.detailName.focus(); } catch {}
-  }
 }
 
 async function saveDetail() {
@@ -530,10 +495,7 @@ async function saveDetail() {
   const newName = safeName(el.detailName ? el.detailName.value : outfit.name);
   const newRating = clampRating(el.detailStars ? (el.detailStars.dataset.value || 0) : (outfit.rating || 0));
 
-  const updated = { ...outfit, name: newName, rating: newRating };
-  await dbPutOutfit(updated);
-
-  // UI
+  await dbPutOutfit({ ...outfit, name: newName, rating: newRating });
   if (el.detailTitle) el.detailTitle.textContent = newName;
 
   await refresh();
@@ -554,12 +516,10 @@ async function toggleFavorite() {
 
 async function deleteDetail() {
   if (!state.selectedId) return;
-
   const ok = confirm("Vuoi eliminare questo outfit? (Non si può annullare)");
   if (!ok) return;
 
   const id = state.selectedId;
-
   await dbDeleteOutfit(id);
   revokeThumbURL(id);
 
@@ -576,28 +536,16 @@ async function shareDetail() {
   const name = safeName(outfit.name);
   const file = new File([outfit.imageBlob], `${name}.jpg`, { type: outfit.imageBlob.type || "image/jpeg" });
 
-  // Web Share (files)
   if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
     try {
-      await navigator.share({
-        title: name,
-        text: `Guarda il mio outfit: ${name}`,
-        files: [file]
-      });
+      await navigator.share({ title: name, text: `Guarda il mio outfit: ${name}`, files: [file] });
       return;
-    } catch {
-      return;
-    }
+    } catch { return; }
   }
 
-  // Web Share (fallback link)
   if (navigator.share) {
     try {
-      await navigator.share({
-        title: "Outfit Vault",
-        text: `Ho salvato un outfit: ${name}`,
-        url: location.href
-      });
+      await navigator.share({ title: "Outfit Vault", text: `Ho salvato un outfit: ${name}`, url: location.href });
       return;
     } catch {}
   }
@@ -606,9 +554,8 @@ async function shareDetail() {
 }
 
 /* -----------------------------
-   9) Add outfit (from file)
+   10) Add outfit
 ----------------------------- */
-
 async function addOutfitFromFile(file) {
   if (!file) return;
 
@@ -633,9 +580,8 @@ async function addOutfitFromFile(file) {
 }
 
 /* -----------------------------
-   10) PWA install + Service Worker
+   11) PWA install + SW
 ----------------------------- */
-
 let deferredInstallEvent = null;
 
 function setupPWAInstall() {
@@ -650,7 +596,7 @@ function setupPWAInstall() {
 
   el.installBtn.addEventListener("click", async () => {
     if (!deferredInstallEvent) {
-      alert("Installazione non disponibile ora. Riprova tra poco dal menu ⋮ di Chrome.");
+      alert("Installazione non disponibile ora. Riprova dal menu ⋮ di Chrome.");
       return;
     }
     deferredInstallEvent.prompt();
@@ -673,37 +619,31 @@ function setupServiceWorker() {
 }
 
 /* -----------------------------
-   11) Settings modal
+   12) Settings modal
 ----------------------------- */
-
 function openSettingsModal() {
   if (el.settingsBackdrop) el.settingsBackdrop.hidden = false;
   if (el.settingsModal) el.settingsModal.hidden = false;
 }
-
 function closeSettingsModal() {
   if (el.settingsBackdrop) el.settingsBackdrop.hidden = true;
   if (el.settingsModal) el.settingsModal.hidden = true;
 }
 
 /* -----------------------------
-   12) Refresh
+   13) Refresh
 ----------------------------- */
-
 async function refresh() {
   state.outfits = await dbGetAllOutfits();
-
   if (el.savedCount) el.savedCount.textContent = String(state.outfits.length);
-
+  setFilterLabelFromSort();
   renderGrid();
 }
 
 /* -----------------------------
-   13) Init + events
+   14) Init
 ----------------------------- */
-
 (function init() {
-  // Theme
   setTheme(state.settings.theme);
 
   const mq = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
@@ -713,19 +653,17 @@ async function refresh() {
     });
   }
 
-  // Initial load
+  initTips();
   refresh().catch(console.error);
 
-  // Add
+  // Add buttons
   if (el.addBtn && el.fileInput) el.addBtn.addEventListener("click", () => el.fileInput.click());
   if (el.emptyAddBtn && el.fileInput) el.emptyAddBtn.addEventListener("click", () => el.fileInput.click());
 
   if (el.fileInput) {
     el.fileInput.addEventListener("change", async (e) => {
       const files = Array.from(e.target.files || []);
-      for (const f of files) {
-        await addOutfitFromFile(f);
-      }
+      for (const f of files) await addOutfitFromFile(f);
       el.fileInput.value = "";
     });
   }
@@ -736,7 +674,6 @@ async function refresh() {
       state.search = el.searchInput.value || "";
       renderGrid();
     }, 120);
-
     el.searchInput.addEventListener("input", onSearch);
   }
 
@@ -744,11 +681,15 @@ async function refresh() {
   if (el.sortSelect) {
     el.sortSelect.addEventListener("change", () => {
       state.sort = el.sortSelect.value;
+      setFilterLabelFromSort();
       renderGrid();
     });
   }
 
-  // Detail modal events
+  // Quick filter (click)
+  if (el.filterBtn) el.filterBtn.addEventListener("click", toggleQuickFilter);
+
+  // Detail modal
   if (el.closeDetail) el.closeDetail.addEventListener("click", closeDetailModal);
   if (el.detailBackdrop) el.detailBackdrop.addEventListener("click", closeDetailModal);
 
@@ -757,13 +698,12 @@ async function refresh() {
   if (el.shareBtn) el.shareBtn.addEventListener("click", shareDetail);
   if (el.favoriteBtn) el.favoriteBtn.addEventListener("click", toggleFavorite);
 
-  // Settings modal events
+  // Settings modal
   if (el.openSettings) el.openSettings.addEventListener("click", openSettingsModal);
   if (el.closeSettings) el.closeSettings.addEventListener("click", closeSettingsModal);
   if (el.settingsBackdrop) el.settingsBackdrop.addEventListener("click", closeSettingsModal);
 
   if (el.themeSelect) el.themeSelect.value = state.settings.theme;
-
   if (el.saveSettings) {
     el.saveSettings.addEventListener("click", () => {
       if (!el.themeSelect) return;
@@ -774,15 +714,13 @@ async function refresh() {
     });
   }
 
-  // ESC to close
+  // ESC
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
-
     if (el.detailModal && !el.detailModal.hidden) closeDetailModal();
     if (el.settingsModal && !el.settingsModal.hidden) closeSettingsModal();
   });
 
-  // PWA
   setupServiceWorker();
   setupPWAInstall();
 })();
