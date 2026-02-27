@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#f7f3ff" />
+  <title>Outfit Vault</title>
+
+  <!-- PWA -->
+  <link rel="manifest" href="./manifest.json">
+  <link rel="icon" href="./icons/icon-192.png">
+  <link rel="apple-touch-icon" href="./icons/icon-192.png">
+
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+
+<body>
+  <!-- Top bar -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">👗</div>
+      <div class="brand-text">
+        <div class="appname">Outfit Vault</div>
+        <div class="tagline" id="tagline">Il tuo guardaroba offline</div>
+      </div>
+    </div>
+
+    <div class="top-actions">
+      <button id="installBtn" class="pill-btn" type="button" hidden aria-label="Installa app">
+        ⬇️ <span id="installBtnText">Installa</span>
+      </button>
+
+      <button id="openSettings" class="icon-btn" type="button" aria-label="Impostazioni">
+        ⚙️
+      </button>
+    </div>
+  </header>
+
+  <!-- Main -->
+  <main class="container">
+    <!-- Add / Controls -->
+    <section class="controls-card">
+      <div class="controls-left">
+        <h1 class="title">I miei outfit</h1>
+        <p class="subtitle" id="subtitle">Carica, vota e condividi.</p>
+        <p class="subtitle"><strong id="savedCount">0</strong> outfit salvati</p>
+      </div>
+
+      <div class="controls-right">
+        <input id="fileInput" type="file" accept="image/*" hidden>
+        <button id="addBtn" class="btn" type="button">
+          ➕ <span id="addBtnText">Aggiungi outfit</span>
+        </button>
+      </div>
+
+      <div class="toolbar">
+        <div class="search-wrap">
+          <span class="search-ico" aria-hidden="true">🔎</span>
+          <input id="searchInput" class="search" type="text" placeholder="Cerca per nome…" />
+        </div>
+
+        <select id="sortSelect" class="select" aria-label="Ordina">
+          <option value="date_desc">Più recenti</option>
+          <option value="date_asc">Più vecchi</option>
+          <option value="fav_first">Preferiti (prima)</option>
+          <option value="fav_only">Solo preferiti</option>
+          <option value="rating_desc">Voto più alto</option>
+          <option value="rating_asc">Voto più basso</option>
+          <option value="name_asc">Nome A→Z</option>
+          <option value="name_desc">Nome Z→A</option>
+        </select>
+      </div>
+    </section>
+
+    <!-- Empty state -->
+    <section id="emptyState" class="empty" hidden>
+      <div class="empty-emoji">🧥</div>
+      <div class="empty-title">Nessun outfit ancora</div>
+      <div class="empty-sub">Tocca “Aggiungi outfit” per iniziare.</div>
+    </section>
+
+    <!-- Grid -->
+    <section id="grid" class="grid" aria-label="Lista outfit"></section>
+  </main>
+
+  <!-- Outfit Detail Modal -->
+  <div id="detailBackdrop" class="modal-backdrop" hidden></div>
+  <section id="detailModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="detailTitle" hidden>
+    <div class="modal-header">
+      <div class="modal-title">
+        <h2 id="detailTitle">Outfit</h2>
+        <div class="modal-meta" id="detailMeta">—</div>
+      </div>
+      <button id="closeDetail" class="icon-btn" type="button" aria-label="Chiudi">✕</button>
+    </div>
+
+    <div class="modal-body">
+      <div class="detail-media">
+        <img id="detailImg" alt="Foto outfit" />
+      </div>
+
+      <div class="detail-fields">
+        <label class="label" for="detailName">Nome</label>
+        <input id="detailName" class="input" type="text" placeholder="Es. Outfit ufficio" />
+
+        <label class="label">Voto</label>
+        <div id="detailStars" class="stars" aria-label="Voto outfit"></div>
+
+        <div class="detail-actions">
+          <button id="favoriteBtn" class="btn secondary" type="button">♡ Preferito</button>
+          <button id="shareBtn" class="btn secondary" type="button">📤 Condividi</button>
+          <button id="deleteBtn" class="btn danger" type="button">🗑️ Elimina</button>
+          <button id="saveDetailBtn" class="btn" type="button">💾 Salva</button>
+        </div>
+
+        <div class="tiny" id="shareHint">
+          Suggerimento: la condivisione funziona al meglio su Chrome mobile (Web Share).
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Settings Modal -->
+  <div id="settingsBackdrop" class="modal-backdrop" hidden></div>
+  <section id="settingsModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle" hidden>
+    <div class="modal-header">
+      <h2 id="settingsTitle">Impostazioni</h2>
+      <button id="closeSettings" class="icon-btn" type="button" aria-label="Chiudi">✕</button>
+    </div>
+
+    <div class="modal-body">
+      <div class="setting">
+        <label class="label" for="themeSelect">Tema</label>
+        <select id="themeSelect" class="select">
+          <option value="system">Sistema</option>
+          <option value="light">Chiaro</option>
+          <option value="dark">Scuro</option>
+        </select>
+        <div class="hint">Il tema viene salvato sul dispositivo.</div>
+      </div>
+
+      <div class="setting">
+        <label class="label">Archivio</label>
+        <div class="hint">
+          Le foto e i voti sono salvati in locale (offline) usando IndexedDB.
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button id="saveSettings" class="btn" type="button">Salva</button>
+    </div>
+  </section>
+
+  <script src="./app.js"></script>
+</body>
+</html>
