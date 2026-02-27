@@ -1,17 +1,27 @@
 /* =========================================================
-   Outfit Vault — app.js
+   Outfit Vault — app.js (refactor completo)
    Offline-first outfits storage with IndexedDB + PWA install
-   + Preferiti (Mi piace)
-   + Contatore outfit salvati
-   + Ordina: preferiti prima / solo preferiti / voto
-   + FIX: immagini che non si visualizzano (conversione JPEG)
+   - Preferiti
+   - Contatore outfit salvati
+   - Ricerca + ordina
+   - Fix immagini (conversione JPEG sicura)
+   - Pulizia ObjectURL per evitare leak
    ========================================================= */
 
 /* -----------------------------
-   1) Settings (LocalStorage)
+   0) Costanti
 ----------------------------- */
 
 const SETTINGS_KEY = "outfit_vault_settings_v1";
+
+const DB_NAME = "OutfitVaultDB";
+const DB_VERSION = 2;
+const STORE = "outfits";
+
+/* -----------------------------
+   1) Settings (LocalStorage + theme)
+----------------------------- */
+
 const settingsDefault = { theme: "system" };
 
 function loadSettings() {
@@ -27,6 +37,16 @@ function saveSettings(s) {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
 }
 
+function setThemeColor(color) {
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", color);
+}
+
+function syncThemeColorWithSystem() {
+  const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  setThemeColor(prefersDark ? "#0b1020" : "#f7f3ff");
+}
+
 function setTheme(theme) {
   const root = document.documentElement;
 
@@ -40,24 +60,10 @@ function setTheme(theme) {
   setThemeColor(theme === "dark" ? "#0b1020" : "#f7f3ff");
 }
 
-function setThemeColor(color) {
-  const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute("content", color);
-}
-
-function syncThemeColorWithSystem() {
-  const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
-  setThemeColor(prefersDark ? "#0b1020" : "#f7f3ff");
-}
-
 /* -----------------------------
-   2) IndexedDB (Photos + Data)
-   - Stores: { id, name, rating, favorite, createdAt, imageBlob }
+   2) IndexedDB
+   Store: { id, name, rating, favorite, createdAt, imageBlob }
 ----------------------------- */
-
-const DB_NAME = "OutfitVaultDB";
-const DB_VERSION = 2;
-const STORE = "outfits";
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -145,11 +151,6 @@ function uid() {
   return `o_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
-function formatDate(ts) {
-  const d = new Date(ts);
-  return d.toLocaleString(undefined, { year: "numeric", month: "short", day: "2-digit" });
-}
-
 function clampRating(n) {
   const x = Number(n);
   if (!Number.isFinite(x)) return 0;
@@ -161,12 +162,21 @@ function safeName(name) {
   return s ? s : "Outfit senza nome";
 }
 
-function makeObjectURL(blob) {
-  return URL.createObjectURL(blob);
+function formatDate(ts) {
+  const d = new Date(ts);
+  return d.toLocaleString(undefined, { year: "numeric", month: "short", day: "2-digit" });
+}
+
+function debounce(fn, wait = 120) {
+  let t = null;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn(...args), wait);
+  };
 }
 
 /**
- * FIX immagini non visualizzate:
+ * Fix immagini non visualizzate:
  * Convertiamo sempre il file in JPEG standard (ridimensionato),
  * evitando problemi su Android con HEIC / mime vuoto / immagini enormi.
  */
@@ -225,12 +235,44 @@ async function fileToSafeJpegBlob(file, maxSide = 1600, quality = 0.9) {
 const state = {
   outfits: [],
   filtered: [],
-  selectedId: null,
-  selectedURL: null,
   search: "",
   sort: "date_desc",
+  selectedId: null,
+  selectedURL: null,
   settings: loadSettings()
 };
+
+/**
+ * Cache ObjectURL per le thumbnail:
+ * - non le revoco subito (alcuni Android rompono la preview)
+ * - le revoco quando rifaccio render o quando elimino/chiudo
+ */
+const urlCache = new Map(); // id -> objectURL
+
+function getThumbURL(outfit) {
+  if (!outfit?.id || !outfit?.imageBlob) return "";
+  const existing = urlCache.get(outfit.id);
+  if (existing) return existing;
+
+  const url = URL.createObjectURL(outfit.imageBlob);
+  urlCache.set(outfit.id, url);
+  return url;
+}
+
+function revokeThumbURL(id) {
+  const url = urlCache.get(id);
+  if (!url) return;
+  try { URL.revokeObjectURL(url); } catch {}
+  urlCache.delete(id);
+}
+
+function resetThumbCacheKeeping(keepIds = new Set()) {
+  for (const [id, url] of urlCache.entries()) {
+    if (keepIds.has(id)) continue;
+    try { URL.revokeObjectURL(url); } catch {}
+    urlCache.delete(id);
+  }
+}
 
 /* -----------------------------
    5) UI Elements
@@ -241,12 +283,14 @@ const el = {
   emptyState: document.getElementById("emptyState"),
 
   addBtn: document.getElementById("addBtn"),
+  emptyAddBtn: document.getElementById("emptyAddBtn"),
   fileInput: document.getElementById("fileInput"),
 
   searchInput: document.getElementById("searchInput"),
   sortSelect: document.getElementById("sortSelect"),
 
   savedCount: document.getElementById("savedCount"),
+  filterLabel: document.getElementById("filterLabel"),
 
   // Detail modal
   detailBackdrop: document.getElementById("detailBackdrop"),
@@ -276,7 +320,7 @@ const el = {
 };
 
 /* -----------------------------
-   6) Rendering (Grid)
+   6) Filters + sort
 ----------------------------- */
 
 function applyFiltersAndSort() {
@@ -284,13 +328,13 @@ function applyFiltersAndSort() {
   let arr = [...state.outfits];
 
   if (q) {
-    arr = arr.filter(o => (o.name || "").toLowerCase().includes(q));
+    arr = arr.filter((o) => (o.name || "").toLowerCase().includes(q));
   }
 
   const s = state.sort;
 
   if (s === "fav_only") {
-    arr = arr.filter(o => !!o.favorite);
+    arr = arr.filter((o) => !!o.favorite);
   }
 
   arr.sort((a, b) => {
@@ -312,36 +356,47 @@ function applyFiltersAndSort() {
   });
 
   state.filtered = arr;
+
+  if (el.filterLabel) {
+    el.filterLabel.textContent = (state.sort === "fav_only") ? "Preferiti" : "Tutti";
+  }
 }
+
+/* -----------------------------
+   7) Rendering (Grid)
+----------------------------- */
 
 function renderGrid() {
   applyFiltersAndSort();
 
   const items = state.filtered;
+  if (!el.grid) return;
+
+  // Mantieni URLs solo per gli elementi effettivamente in lista per ridurre memoria
+  const keepIds = new Set(items.map((o) => o.id));
+  resetThumbCacheKeeping(keepIds);
+
   el.grid.innerHTML = "";
 
   if (!items.length) {
-    el.emptyState.hidden = false;
+    if (el.emptyState) el.emptyState.hidden = false;
     return;
   }
-  el.emptyState.hidden = true;
+  if (el.emptyState) el.emptyState.hidden = true;
 
   for (const outfit of items) {
     const card = document.createElement("article");
     card.className = "card";
     card.tabIndex = 0;
+    card.setAttribute("role", "button");
+    card.setAttribute("aria-label", `Apri ${safeName(outfit.name)}`);
 
     const img = document.createElement("img");
     img.className = "thumb";
     img.alt = outfit.name || "Outfit";
     img.loading = "lazy";
 
-    const url = makeObjectURL(outfit.imageBlob);
-    img.src = url;
-
-    // Non revocare subito: su alcuni Android rompe la preview (immagine rotta)
-    // (se vuoi pulizia memoria: si può fare in modo più sicuro con una cache URL)
-
+    img.src = getThumbURL(outfit);
     img.addEventListener("error", () => {
       console.warn("Immagine non caricata:", outfit.id, outfit.name, outfit.imageBlob);
     });
@@ -377,7 +432,10 @@ function renderGrid() {
     const open = () => openDetail(outfit.id);
     card.addEventListener("click", open);
     card.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" || e.key === " ") open();
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        open();
+      }
     });
 
     el.grid.appendChild(card);
@@ -385,18 +443,19 @@ function renderGrid() {
 }
 
 /* -----------------------------
-   7) Detail modal (view/edit/share)
+   8) Detail modal (open/close)
 ----------------------------- */
 
 function openDetailModal() {
-  el.detailBackdrop.hidden = false;
-  el.detailModal.hidden = false;
+  if (el.detailBackdrop) el.detailBackdrop.hidden = false;
+  if (el.detailModal) el.detailModal.hidden = false;
 }
 
 function closeDetailModal() {
-  el.detailBackdrop.hidden = true;
-  el.detailModal.hidden = true;
+  if (el.detailBackdrop) el.detailBackdrop.hidden = true;
+  if (el.detailModal) el.detailModal.hidden = true;
 
+  // revoca preview detail (non le thumb)
   if (state.selectedURL) {
     try { URL.revokeObjectURL(state.selectedURL); } catch {}
   }
@@ -405,6 +464,7 @@ function closeDetailModal() {
 }
 
 function renderStars(container, value, onChange) {
+  if (!container) return;
   container.innerHTML = "";
   const current = clampRating(value);
 
@@ -431,28 +491,34 @@ async function openDetail(id) {
 
   state.selectedId = id;
 
-  el.detailTitle.textContent = safeName(outfit.name);
-  el.detailMeta.textContent = `Creato: ${formatDate(outfit.createdAt)}`;
+  if (el.detailTitle) el.detailTitle.textContent = safeName(outfit.name);
+  if (el.detailMeta) el.detailMeta.textContent = `Creato: ${formatDate(outfit.createdAt)}`;
 
+  // Preview detail (revoca la precedente)
   if (state.selectedURL) {
     try { URL.revokeObjectURL(state.selectedURL); } catch {}
   }
-  state.selectedURL = makeObjectURL(outfit.imageBlob);
-  el.detailImg.src = state.selectedURL;
+  state.selectedURL = URL.createObjectURL(outfit.imageBlob);
+  if (el.detailImg) el.detailImg.src = state.selectedURL;
 
-  el.detailName.value = outfit.name || "";
+  if (el.detailName) el.detailName.value = outfit.name || "";
 
   const handleStar = (newRating) => {
     renderStars(el.detailStars, newRating, handleStar);
-    el.detailStars.dataset.value = String(newRating);
+    if (el.detailStars) el.detailStars.dataset.value = String(newRating);
   };
 
   renderStars(el.detailStars, outfit.rating || 0, handleStar);
-  el.detailStars.dataset.value = String(clampRating(outfit.rating || 0));
+  if (el.detailStars) el.detailStars.dataset.value = String(clampRating(outfit.rating || 0));
 
   setFavoriteBtn(!!outfit.favorite);
 
   openDetailModal();
+
+  // piccolo comfort: focus sul nome
+  if (el.detailName) {
+    try { el.detailName.focus(); } catch {}
+  }
 }
 
 async function saveDetail() {
@@ -461,19 +527,16 @@ async function saveDetail() {
   const outfit = await dbGetOutfit(state.selectedId);
   if (!outfit) return;
 
-  const newName = safeName(el.detailName.value);
-  const newRating = clampRating(el.detailStars.dataset.value || 0);
+  const newName = safeName(el.detailName ? el.detailName.value : outfit.name);
+  const newRating = clampRating(el.detailStars ? (el.detailStars.dataset.value || 0) : (outfit.rating || 0));
 
-  const updated = {
-    ...outfit,
-    name: newName,
-    rating: newRating
-  };
-
+  const updated = { ...outfit, name: newName, rating: newRating };
   await dbPutOutfit(updated);
-  await refresh();
 
-  el.detailTitle.textContent = newName;
+  // UI
+  if (el.detailTitle) el.detailTitle.textContent = newName;
+
+  await refresh();
 }
 
 async function toggleFavorite() {
@@ -491,10 +554,15 @@ async function toggleFavorite() {
 
 async function deleteDetail() {
   if (!state.selectedId) return;
+
   const ok = confirm("Vuoi eliminare questo outfit? (Non si può annullare)");
   if (!ok) return;
 
-  await dbDeleteOutfit(state.selectedId);
+  const id = state.selectedId;
+
+  await dbDeleteOutfit(id);
+  revokeThumbURL(id);
+
   closeDetailModal();
   await refresh();
 }
@@ -508,6 +576,7 @@ async function shareDetail() {
   const name = safeName(outfit.name);
   const file = new File([outfit.imageBlob], `${name}.jpg`, { type: outfit.imageBlob.type || "image/jpeg" });
 
+  // Web Share (files)
   if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
     try {
       await navigator.share({
@@ -521,26 +590,28 @@ async function shareDetail() {
     }
   }
 
-  try {
-    await navigator.share({
-      title: "Outfit Vault",
-      text: `Ho salvato un outfit: ${name}`,
-      url: location.href
-    });
-    return;
-  } catch {}
+  // Web Share (fallback link)
+  if (navigator.share) {
+    try {
+      await navigator.share({
+        title: "Outfit Vault",
+        text: `Ho salvato un outfit: ${name}`,
+        url: location.href
+      });
+      return;
+    } catch {}
+  }
 
   alert("Condivisione non supportata su questo dispositivo/browser.");
 }
 
 /* -----------------------------
-   8) Add outfit (from file)
+   9) Add outfit (from file)
 ----------------------------- */
 
 async function addOutfitFromFile(file) {
   if (!file) return;
 
-  // FIX: convertiamo sempre a JPEG sicuro
   const safeBlob = await fileToSafeJpegBlob(file, 1600, 0.9);
 
   const outfit = {
@@ -562,12 +633,13 @@ async function addOutfitFromFile(file) {
 }
 
 /* -----------------------------
-   9) PWA install + Service Worker
+   10) PWA install + Service Worker
 ----------------------------- */
 
 let deferredInstallEvent = null;
 
 function setupPWAInstall() {
+  if (!el.installBtn) return;
   el.installBtn.hidden = true;
 
   window.addEventListener("beforeinstallprompt", (e) => {
@@ -601,37 +673,37 @@ function setupServiceWorker() {
 }
 
 /* -----------------------------
-   10) Settings modal
+   11) Settings modal
 ----------------------------- */
 
 function openSettingsModal() {
-  el.settingsBackdrop.hidden = false;
-  el.settingsModal.hidden = false;
+  if (el.settingsBackdrop) el.settingsBackdrop.hidden = false;
+  if (el.settingsModal) el.settingsModal.hidden = false;
 }
+
 function closeSettingsModal() {
-  el.settingsBackdrop.hidden = true;
-  el.settingsModal.hidden = true;
+  if (el.settingsBackdrop) el.settingsBackdrop.hidden = true;
+  if (el.settingsModal) el.settingsModal.hidden = true;
 }
 
 /* -----------------------------
-   11) Refresh
+   12) Refresh
 ----------------------------- */
 
 async function refresh() {
   state.outfits = await dbGetAllOutfits();
 
-  if (el.savedCount) {
-    el.savedCount.textContent = String(state.outfits.length);
-  }
+  if (el.savedCount) el.savedCount.textContent = String(state.outfits.length);
 
   renderGrid();
 }
 
 /* -----------------------------
-   12) Init
+   13) Init + events
 ----------------------------- */
 
 (function init() {
+  // Theme
   setTheme(state.settings.theme);
 
   const mq = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
@@ -641,55 +713,76 @@ async function refresh() {
     });
   }
 
+  // Initial load
   refresh().catch(console.error);
 
-  el.addBtn.addEventListener("click", () => el.fileInput.click());
-  el.fileInput.addEventListener("change", async (e) => {
-    const files = Array.from(e.target.files || []);
-    for (const f of files) {
-      await addOutfitFromFile(f);
-    }
-    el.fileInput.value = "";
-  });
+  // Add
+  if (el.addBtn && el.fileInput) el.addBtn.addEventListener("click", () => el.fileInput.click());
+  if (el.emptyAddBtn && el.fileInput) el.emptyAddBtn.addEventListener("click", () => el.fileInput.click());
 
-  el.searchInput.addEventListener("input", () => {
-    state.search = el.searchInput.value;
-    renderGrid();
-  });
+  if (el.fileInput) {
+    el.fileInput.addEventListener("change", async (e) => {
+      const files = Array.from(e.target.files || []);
+      for (const f of files) {
+        await addOutfitFromFile(f);
+      }
+      el.fileInput.value = "";
+    });
+  }
 
-  el.sortSelect.addEventListener("change", () => {
-    state.sort = el.sortSelect.value;
-    renderGrid();
-  });
+  // Search (debounced)
+  if (el.searchInput) {
+    const onSearch = debounce(() => {
+      state.search = el.searchInput.value || "";
+      renderGrid();
+    }, 120);
 
-  el.closeDetail.addEventListener("click", closeDetailModal);
-  el.detailBackdrop.addEventListener("click", closeDetailModal);
+    el.searchInput.addEventListener("input", onSearch);
+  }
 
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") {
-      if (!el.detailModal.hidden) closeDetailModal();
-      if (!el.settingsModal.hidden) closeSettingsModal();
-    }
-  });
+  // Sort
+  if (el.sortSelect) {
+    el.sortSelect.addEventListener("change", () => {
+      state.sort = el.sortSelect.value;
+      renderGrid();
+    });
+  }
 
-  el.saveDetailBtn.addEventListener("click", saveDetail);
-  el.deleteBtn.addEventListener("click", deleteDetail);
-  el.shareBtn.addEventListener("click", shareDetail);
+  // Detail modal events
+  if (el.closeDetail) el.closeDetail.addEventListener("click", closeDetailModal);
+  if (el.detailBackdrop) el.detailBackdrop.addEventListener("click", closeDetailModal);
+
+  if (el.saveDetailBtn) el.saveDetailBtn.addEventListener("click", saveDetail);
+  if (el.deleteBtn) el.deleteBtn.addEventListener("click", deleteDetail);
+  if (el.shareBtn) el.shareBtn.addEventListener("click", shareDetail);
   if (el.favoriteBtn) el.favoriteBtn.addEventListener("click", toggleFavorite);
 
-  el.openSettings.addEventListener("click", openSettingsModal);
-  el.closeSettings.addEventListener("click", closeSettingsModal);
-  el.settingsBackdrop.addEventListener("click", closeSettingsModal);
+  // Settings modal events
+  if (el.openSettings) el.openSettings.addEventListener("click", openSettingsModal);
+  if (el.closeSettings) el.closeSettings.addEventListener("click", closeSettingsModal);
+  if (el.settingsBackdrop) el.settingsBackdrop.addEventListener("click", closeSettingsModal);
 
-  el.themeSelect.value = state.settings.theme;
-  el.saveSettings.addEventListener("click", () => {
-    state.settings.theme = el.themeSelect.value;
-    saveSettings(state.settings);
+  if (el.themeSelect) el.themeSelect.value = state.settings.theme;
 
-    setTheme(state.settings.theme);
-    closeSettingsModal();
+  if (el.saveSettings) {
+    el.saveSettings.addEventListener("click", () => {
+      if (!el.themeSelect) return;
+      state.settings.theme = el.themeSelect.value;
+      saveSettings(state.settings);
+      setTheme(state.settings.theme);
+      closeSettingsModal();
+    });
+  }
+
+  // ESC to close
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+
+    if (el.detailModal && !el.detailModal.hidden) closeDetailModal();
+    if (el.settingsModal && !el.settingsModal.hidden) closeSettingsModal();
   });
 
+  // PWA
   setupServiceWorker();
   setupPWAInstall();
 })();
