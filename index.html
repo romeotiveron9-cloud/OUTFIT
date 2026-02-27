@@ -15,9 +15,9 @@
 </head>
 
 <body>
-  <!-- App Shell -->
+  <!-- Header: 2 righe su mobile, 1 riga su desktop -->
   <header class="app-header">
-    <div class="header-left">
+    <div class="header-row header-top">
       <div class="brand">
         <div class="logo" aria-hidden="true">👔</div>
         <div class="brand-text">
@@ -26,31 +26,43 @@
         </div>
       </div>
 
-      <!-- Search always visible (like a real app) -->
+      <div class="header-actions">
+        <button id="installBtn" class="chip chip-accent" type="button" hidden aria-label="Installa app">
+          ⬇️ <span id="installBtnText">Installa</span>
+        </button>
+
+        <input id="fileInput" type="file" accept="image/*" hidden>
+        <button id="addBtn" class="btn btn-primary" type="button">
+          ➕ <span id="addBtnText">Aggiungi</span>
+        </button>
+
+        <button id="openSettings" class="icon-btn" type="button" aria-label="Impostazioni">⚙️</button>
+      </div>
+    </div>
+
+    <div class="header-row header-bottom">
       <div class="search-wrap">
         <span class="search-ico" aria-hidden="true">⌕</span>
         <input id="searchInput" class="search" type="text" placeholder="Cerca outfit…" />
       </div>
-    </div>
 
-    <div class="header-right">
-      <button id="installBtn" class="chip chip-accent" type="button" hidden aria-label="Installa app">
-        ⬇️ <span id="installBtnText">Installa</span>
-      </button>
-
-      <input id="fileInput" type="file" accept="image/*" hidden>
-      <button id="addBtn" class="btn btn-primary" type="button">
-        ➕ <span id="addBtnText">Aggiungi</span>
-      </button>
-
-      <button id="openSettings" class="icon-btn" type="button" aria-label="Impostazioni">
-        ⚙️
-      </button>
+      <div class="sort-wrap">
+        <select id="sortSelect" class="select" aria-label="Ordina">
+          <option value="date_desc">Più recenti</option>
+          <option value="date_asc">Più vecchi</option>
+          <option value="fav_first">Preferiti (prima)</option>
+          <option value="fav_only">Solo preferiti</option>
+          <option value="rating_desc">Voto più alto</option>
+          <option value="rating_asc">Voto più basso</option>
+          <option value="name_asc">Nome A→Z</option>
+          <option value="name_desc">Nome Z→A</option>
+        </select>
+      </div>
     </div>
   </header>
 
   <main class="app-main">
-    <!-- Sidebar / Controls -->
+    <!-- Sidebar -->
     <aside class="sidebar" aria-label="Controlli">
       <section class="panel">
         <div class="panel-head">
@@ -63,29 +75,18 @@
             <div class="stat-label">Salvati</div>
             <div class="stat-value"><span id="savedCount">0</span></div>
           </div>
-          <div class="stat">
+
+          <!-- Filtro cliccabile -->
+          <button id="filterBtn" class="stat stat-btn" type="button" aria-label="Cambia filtro">
             <div class="stat-label">Filtro</div>
             <div class="stat-value stat-muted" id="filterLabel">Tutti</div>
-          </div>
+          </button>
         </div>
 
-        <div class="field">
-          <label class="label" for="sortSelect">Ordina</label>
-          <select id="sortSelect" class="select" aria-label="Ordina">
-            <option value="date_desc">Più recenti</option>
-            <option value="date_asc">Più vecchi</option>
-            <option value="fav_first">Preferiti (prima)</option>
-            <option value="fav_only">Solo preferiti</option>
-            <option value="rating_desc">Voto più alto</option>
-            <option value="rating_asc">Voto più basso</option>
-            <option value="name_asc">Nome A→Z</option>
-            <option value="name_desc">Nome Z→A</option>
-          </select>
-        </div>
-
-        <div class="quick-tips">
-          <div class="tip">💡 Suggerimento: apri un outfit e premi “♡ Preferito” per tenerli in alto.</div>
-          <div class="tip">📤 La condivisione rende al meglio su Chrome mobile (Web Share).</div>
+        <!-- Suggerimenti (spariscono dopo la prima apertura) -->
+        <div id="tips" class="quick-tips" hidden>
+          <div class="tip">💡 Tocca “Filtro” per vedere solo i preferiti.</div>
+          <div class="tip">📤 La condivisione rende al meglio su Chrome mobile.</div>
         </div>
       </section>
     </aside>
@@ -163,9 +164,7 @@
 
       <div class="setting">
         <label class="label">Archivio</label>
-        <div class="hint">
-          Le foto e i voti sono salvati in locale (offline) usando IndexedDB.
-        </div>
+        <div class="hint">Le foto e i voti sono salvati in locale (offline) usando IndexedDB.</div>
       </div>
     </div>
 
