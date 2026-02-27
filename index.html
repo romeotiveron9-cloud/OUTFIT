@@ -15,20 +15,32 @@
 </head>
 
 <body>
-  <!-- Top bar -->
-  <header class="topbar">
-    <div class="brand">
-      <!-- CAMBIATA EMOJI: uomo -->
-      <div class="logo" aria-hidden="true">👔</div>
-      <div class="brand-text">
-        <div class="appname">Outfit Vault</div>
-        <div class="tagline" id="tagline">Il tuo guardaroba offline</div>
+  <!-- App Shell -->
+  <header class="app-header">
+    <div class="header-left">
+      <div class="brand">
+        <div class="logo" aria-hidden="true">👔</div>
+        <div class="brand-text">
+          <div class="appname">Outfit Vault</div>
+          <div class="tagline" id="tagline">Il tuo guardaroba offline</div>
+        </div>
+      </div>
+
+      <!-- Search always visible (like a real app) -->
+      <div class="search-wrap">
+        <span class="search-ico" aria-hidden="true">⌕</span>
+        <input id="searchInput" class="search" type="text" placeholder="Cerca outfit…" />
       </div>
     </div>
 
-    <div class="top-actions">
-      <button id="installBtn" class="pill-btn" type="button" hidden aria-label="Installa app">
+    <div class="header-right">
+      <button id="installBtn" class="chip chip-accent" type="button" hidden aria-label="Installa app">
         ⬇️ <span id="installBtnText">Installa</span>
+      </button>
+
+      <input id="fileInput" type="file" accept="image/*" hidden>
+      <button id="addBtn" class="btn btn-primary" type="button">
+        ➕ <span id="addBtnText">Aggiungi</span>
       </button>
 
       <button id="openSettings" class="icon-btn" type="button" aria-label="Impostazioni">
@@ -37,51 +49,60 @@
     </div>
   </header>
 
-  <!-- Main -->
-  <main class="container">
-    <!-- Add / Controls -->
-    <section class="controls-card">
-      <div class="controls-left">
-        <h1 class="title">I miei outfit</h1>
-        <p class="subtitle" id="subtitle">Carica, vota e condividi.</p>
-        <p class="subtitle"><strong id="savedCount">0</strong> outfit salvati</p>
-      </div>
-
-      <div class="controls-right">
-        <input id="fileInput" type="file" accept="image/*" hidden>
-        <button id="addBtn" class="btn" type="button">
-          ➕ <span id="addBtnText">Aggiungi outfit</span>
-        </button>
-      </div>
-
-      <div class="toolbar">
-        <div class="search-wrap">
-          <span class="search-ico" aria-hidden="true">🔎</span>
-          <input id="searchInput" class="search" type="text" placeholder="Cerca per nome…" />
+  <main class="app-main">
+    <!-- Sidebar / Controls -->
+    <aside class="sidebar" aria-label="Controlli">
+      <section class="panel">
+        <div class="panel-head">
+          <h1 class="title">I miei outfit</h1>
+          <p class="subtitle" id="subtitle">Carica, vota e condividi.</p>
         </div>
 
-        <select id="sortSelect" class="select" aria-label="Ordina">
-          <option value="date_desc">Più recenti</option>
-          <option value="date_asc">Più vecchi</option>
-          <option value="fav_first">Preferiti (prima)</option>
-          <option value="fav_only">Solo preferiti</option>
-          <option value="rating_desc">Voto più alto</option>
-          <option value="rating_asc">Voto più basso</option>
-          <option value="name_asc">Nome A→Z</option>
-          <option value="name_desc">Nome Z→A</option>
-        </select>
-      </div>
-    </section>
+        <div class="stats">
+          <div class="stat">
+            <div class="stat-label">Salvati</div>
+            <div class="stat-value"><span id="savedCount">0</span></div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Filtro</div>
+            <div class="stat-value stat-muted" id="filterLabel">Tutti</div>
+          </div>
+        </div>
 
-    <!-- Empty state -->
-    <section id="emptyState" class="empty" hidden>
-      <div class="empty-emoji">🧥</div>
-      <div class="empty-title">Nessun outfit ancora</div>
-      <div class="empty-sub">Tocca “Aggiungi outfit” per iniziare.</div>
-    </section>
+        <div class="field">
+          <label class="label" for="sortSelect">Ordina</label>
+          <select id="sortSelect" class="select" aria-label="Ordina">
+            <option value="date_desc">Più recenti</option>
+            <option value="date_asc">Più vecchi</option>
+            <option value="fav_first">Preferiti (prima)</option>
+            <option value="fav_only">Solo preferiti</option>
+            <option value="rating_desc">Voto più alto</option>
+            <option value="rating_asc">Voto più basso</option>
+            <option value="name_asc">Nome A→Z</option>
+            <option value="name_desc">Nome Z→A</option>
+          </select>
+        </div>
 
-    <!-- Grid -->
-    <section id="grid" class="grid" aria-label="Lista outfit"></section>
+        <div class="quick-tips">
+          <div class="tip">💡 Suggerimento: apri un outfit e premi “♡ Preferito” per tenerli in alto.</div>
+          <div class="tip">📤 La condivisione rende al meglio su Chrome mobile (Web Share).</div>
+        </div>
+      </section>
+    </aside>
+
+    <!-- Content -->
+    <section class="content" aria-label="Contenuto principale">
+      <section id="emptyState" class="empty" hidden>
+        <div class="empty-card">
+          <div class="empty-emoji">🧥</div>
+          <div class="empty-title">Nessun outfit ancora</div>
+          <div class="empty-sub">Tocca “Aggiungi” per iniziare. Tutto resta sul tuo dispositivo.</div>
+          <button class="btn btn-primary btn-wide" type="button" id="emptyAddBtn">➕ Aggiungi il primo outfit</button>
+        </div>
+      </section>
+
+      <section id="grid" class="grid" aria-label="Lista outfit"></section>
+    </section>
   </main>
 
   <!-- Outfit Detail Modal -->
@@ -108,10 +129,10 @@
         <div id="detailStars" class="stars" aria-label="Voto outfit"></div>
 
         <div class="detail-actions">
-          <button id="favoriteBtn" class="btn secondary" type="button">♡ Preferito</button>
-          <button id="shareBtn" class="btn secondary" type="button">📤 Condividi</button>
-          <button id="deleteBtn" class="btn danger" type="button">🗑️ Elimina</button>
-          <button id="saveDetailBtn" class="btn" type="button">💾 Salva</button>
+          <button id="favoriteBtn" class="btn btn-secondary" type="button">♡ Preferito</button>
+          <button id="shareBtn" class="btn btn-secondary" type="button">📤 Condividi</button>
+          <button id="deleteBtn" class="btn btn-danger" type="button">🗑️ Elimina</button>
+          <button id="saveDetailBtn" class="btn btn-primary" type="button">💾 Salva</button>
         </div>
 
         <div class="tiny" id="shareHint">
@@ -149,7 +170,7 @@
     </div>
 
     <div class="modal-footer">
-      <button id="saveSettings" class="btn" type="button">Salva</button>
+      <button id="saveSettings" class="btn btn-primary" type="button">Salva</button>
     </div>
   </section>
 
